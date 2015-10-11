@@ -1,32 +1,60 @@
 {
   init: function(elevators, floors) {
-    //var fCtrl = new FloorsController();
-    var floorsObject= {};
+    var fCtrl = new FloorController(floors);
     floors.forEach(function(floor) {
-      var floorNum = floor.floorNum();
-      floorsObject[floorNum] = floor;
-      new FloorController(floor);
-    });
-    var eCtrl = new ElevatorController(floorsObject, elevators[0]);
-    //var eCtrl1 = new ElevatorController(floorsObject, elevators[1]);
-    //var eCtrl2 = new ElevatorController(floorsObject, elevators[2]);
-    //var eCtrl3 = new ElevatorController(floorsObject, elevators[3]);
-    console.log(floorsObject);
-
-    function FloorController(floor) {
-      var floor = floor;
       floor.on("up_button_pressed", function() {
-        eCtrl.moveToNextByFloorButton(floor.floorNum());
+        fCtrl.updateButtonPressed();
       });
       floor.on("down_button_pressed", function() {
-        eCtrl.moveToNextByFloorButton(floor.floorNum());
-      });
+        fCtrl.updateButtonPressed();
+      })
+    });
+
+    elevators.forEach(function(elevator) {
+      new ElevatorController(fCtrl, elevator);
+    })
+
+    function FloorController(floors) {
+      var topFloor = floors.length - 1;
+      var upButtonPressedFloorList = [];
+      var downButtonPressedFloorList = [];
+      this.updateButtonPressed = function() {
+        upButtonPressedFloorList = floors.map(upPressedFloorList).filter(function(e) { return e !== null });
+        downButtonPressedFloorList = floors.map(downPressedFloorList).filter(function(e) { return e !== null });
+      }
+
+      this.getUpButtonPressedFloorList = function() {
+        return upButtonPressedFloorList;
+      }
+
+      this.getDownButtonPressedFloorList = function() {
+        return downButtonPressedFloorList;
+      }
+
+      this.getTopFloor = function() {
+        return topFloor;
+      }
+
+      function upPressedFloorList(floor) {
+        if(floor.buttonStates.up === "activated") {
+          return floor.level;
+        }
+        return null;
+      }
+
+      function downPressedFloorList(floor) {
+        if(floor.buttonStates.down === "activated") {
+          return floor.level;
+        }
+        return null;
+      }
     }
 
-    function ElevatorController(floorsObject, elevator) {
+    function ElevatorController(FloorController, elevator) {
       var elevator = elevator;
       var direction = "stop";
       var self = this;
+      var maxLoadFactor = 0.5;
 
       this.setDirection = function(moveTo, force) {
         if(elevator.currentFloor() > moveTo) {
@@ -42,95 +70,120 @@
           elevator.goingUpIndicator(true);
           elevator.goingDownIndicator(true);
         }
-        if(force) {
           elevator.goToFloor(moveTo, true);
-        } else {
-          elevator.goToFloor(moveTo);
-        }
       }
-
-      this.moveToNext = function(next) {
-        //var next = floorsCtrl.getNearCalledFloor(elevator.currentFloor());
-        self.setDirection(next);
-        //elevator.goToFloor(next);
-      }
-
-      this.moveToNextByFloorButton = function(next) {
-        if(direction === "stop") {
-          self.setDirection(next);
-        }
-      } 
 
       this.checkNext = function() {
         var next;
-        var pressedFloors = elevator.getPressedFloors();
-        if(!pressedFloors.length) { return; }
-        console.log(pressedFloors);
-        console.log(direction);
-        //downで1階に入って3、4階が押された場合、4、3と到着してしまう
+        var list = [];
         if(direction === "up") {
-          next = Math.min.apply(null, pressedFloors);
+          if(elevator.loadFactor() < maxLoadFactor) {
+            list = FloorController.getUpButtonPressedFloorList();
+          }
+          Array.prototype.push.apply(list, elevator.getPressedFloors());
+          list = list.filter(function(e) { return e > elevator.currentFloor() });
+          list = list.filter(function (x, i, self) {
+            return self.indexOf(x) === i;
+          });
+          if(list.indexOf(elevator.currentFloor()) >= 0) {
+            list.splice(list.indexOf(elevator.currentFloor()), 1);
+          }
+          next = Math.min.apply(null, list);
+        } else if(direction === "down") {
+          if(elevator.loadFactor() < maxLoadFactor) {
+            list = FloorController.getDownButtonPressedFloorList();
+          }
+          Array.prototype.push.apply(list, elevator.getPressedFloors());
+          list = list.filter(function(e) { return e < elevator.currentFloor() });
+          list = list.filter(function (x, i, self) {
+            return self.indexOf(x) === i;
+          });
+          if(list.indexOf(elevator.currentFloor()) >= 0) {
+            list.splice(list.indexOf(elevator.currentFloor()), 1);
+          }
+          next = Math.max.apply(null, list);
         } else {
-          next = Math.max.apply(null, pressedFloors);
+          next = this.getNearCalledFloor();
         }
-        console.log(next);
         return next;
       }
 
+      this.getNearCalledFloor = function() {
+          var list = [];
+          if(elevator.loadFactor() < maxLoadFactor) {
+            list = FloorController.getUpButtonPressedFloorList();
+            Array.prototype.push.apply(list, FloorController.getDownButtonPressedFloorList());
+          }
+          Array.prototype.push.apply(list, elevator.getPressedFloors());
+          list = list.filter(function (x, i, self) {
+            return self.indexOf(x) === i;
+          });
+          if(elevator.loadFactor() !== 0) {
+            if(list.indexOf(elevator.currentFloor()) >= 0) {
+              list.splice(list.indexOf(elevator.currentFloor()), 1);
+            }
+          }
+          return getClosestNum(elevator.currentFloor(), list);
+      }
+
       elevator.on("idle", function() {
-        elevator.goingUpIndicator(true);
-        elevator.goingDownIndicator(true);
-        self.setDirection(elevator.currentFloor());
-        //elevator.goToFloor(elevator.currentFloor());
+        self.setDirection(self.getNearCalledFloor());
       });
 
       elevator.on("floor_button_pressed", function(floorNum) {
-        //elevator.destinationQueue.push(floorNum);
-        //reserveFloor.push(floorNum);
       });
 
       elevator.on("stopped_at_floor", function(floorNum) {
         var pressedFloors = elevator.getPressedFloors();
+
+        if(floorNum === FloorController.getTopFloor()) {
+          elevator.goingUpIndicator(false);
+          elevator.goingDownIndicator(true);
+        } else if(floorNum === 0) {
+          elevator.goingUpIndicator(true);
+          elevator.goingDownIndicator(false);
+        }
         //elevator.destinationQueue.push(floorNum);
-        if(pressedFloors.length) {
+        if(isFinite(self.checkNext())) {
           self.setDirection(self.checkNext());
         } else {
-          var temp;
-          var index;
-          for(i=0;i<floorsObject.length;i++) {
-            if(floorsObject[i].buttonStates.up === "activated" || floorsObject[i].buttonStates.down === "activated") {
-              if(!temp) {
-                temp = Math.abs(floorNum-i);
-                index = i;
-              } else if(Math.abs(floorNum-i) < temp){
-                temp = Math.abs(floorNum-i);
-                index = i;
-              }
-            }
-          }
-          self.moveToNextByFloorButton(i);
+          self.setDirection(self.getNearCalledFloor());
         }
       });
 
       elevator.on("passing_floor", function(floorNum, d) {
         direction = d;
-        if(d === "up") {
-          if(floorsObject[floorNum+1].buttonStates.up === "activated") {
-            self.setDirection(floorNum+1, true);
-            //elevator.goToFloor(floorNum, true);
-          }
+        FloorController.updateButtonPressed();
+        if(isFinite(self.checkNext())) {
+          self.setDirection(self.checkNext());
         } else {
-          if(floorsObject[floorNum-1].buttonStates.down === "activated") {
-            self.setDirection(floorNum-1, true);
-            //elevator.goToFloor(floorNum, true);
+          if(direction === "up") {
+            self.setDirection(Math.max.apply(null,FloorController.getDownButtonPressedFloorList()));
+          } else {
+            self.setDirection(Math.min.apply(null,FloorController.getUpButtonPressedFloorList()));
           }
         }
       });
+
+    }
+
+    function getClosestNum(num, ar){
+       var closest;
+       if(Object.prototype.toString.call(ar) ==='[object Array]' && ar.length>0){
+         closest = ar[0];
+         for(var i=0;i<ar.length;i++){ 
+            var closestDiff = Math.abs(num - closest);
+            var currentDiff = Math.abs(num - ar[i]);
+            if(currentDiff < closestDiff){
+                closest = ar[i];
+            }
+          }
+          return closest;
+        }
+     return false;
     }
   },
   update: function(dt, elevators, floors) {
-      // We normally don't need to do anything here
+        // We normally don't need to do anything here
   }
 }
-
-
